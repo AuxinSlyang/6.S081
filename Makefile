@@ -409,5 +409,7 @@ myapi.key:
 		false; \
 	fi;
 
+gdb: gdb-multiarch kernel/kernel
+
 
 .PHONY: handin tarball tarball-pref clean grade handin-check
