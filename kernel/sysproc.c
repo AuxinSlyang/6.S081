@@ -5,6 +5,34 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "sysinfo.h"
+
+uint64
+sys_trace(void)
+{
+  int mask = 0;
+  argint(0, &mask);
+  printf("try to trace now %d %d\n", myproc()->pid, mask);
+
+  myproc()->trace_mask = mask;
+  return 0;
+}
+
+uint64
+sys_sysinfo(void)
+{
+  uint64 addr;
+  argaddr(0, &addr);
+
+  struct sysinfo info;
+  info.freemem = free_mem();
+  info.nproc = n_proc();
+
+  struct proc *p = myproc();
+  if(copyout(p->pagetable, addr, (char *)&info, sizeof(info)) < 0)
+    return -1;
+  return 0;
+}
 
 uint64
 sys_exit(void)
