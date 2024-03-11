@@ -74,7 +74,20 @@ sys_sleep(void)
 int
 sys_pgaccess(void)
 {
-  // lab pgtbl: your code here.
+  printf("try to do pgaccess\n");
+  uint64 start;
+  int num;
+  uint64 abitaddr;
+  int abitres;
+  struct proc* p = myproc();
+
+  argaddr(0, &start);
+  argint(1, &num);
+  argaddr(2, &abitaddr);
+  abitres = _vmaccess(p->pagetable, start, num);
+  if (copyout(p->pagetable, abitaddr, (char *)&abitres, sizeof(abitres)) < 0) {
+    return -1;
+  }
   return 0;
 }
 #endif

@@ -3081,6 +3081,8 @@ main(int argc, char *argv[])
   int quick = 0;
   char *justone = 0;
 
+  printf("try to do usertest.\n");
+
   if(argc == 2 && strcmp(argv[1], "-q") == 0){
     quick = 1;
   } else if(argc == 2 && strcmp(argv[1], "-c") == 0){

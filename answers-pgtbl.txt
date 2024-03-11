@@ -1,0 +1,2 @@
+Without getting into kernel space means without some context exchange overhead, so ugetpid Faster.
+page 0 .data, page 2 stack.

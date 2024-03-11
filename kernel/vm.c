@@ -70,6 +70,49 @@ kvminithart()
   sfence_vma();
 }
 
+int
+_vmaccess(pagetable_t pagetable, uint64 vastart, int pagenum) {
+  pte_t *pte;
+  int abit = 0;
+
+  for (int i = 0; i < pagenum; i ++) {
+    pte = walk(pagetable, vastart, 0);
+    if (PTE_A & *pte) {
+      abit = abit | (1 << i);
+      // reset back;
+      *pte = *pte & ~PTE_A;
+    }
+    
+
+    vastart += PGSIZE;
+  }
+  
+  return abit;
+}
+
+void
+vmprint(pagetable_t pagetable) {
+  printf("page table %p\n", pagetable);
+  _vmprint(pagetable, 2);
+}
+
+void
+_vmprint(pagetable_t pagetable, int level) {
+  if (level < 0)
+    return;
+  for(int i = 0; i < 512; i++) {
+    pte_t *pte = &pagetable[i];
+    if (*pte & PTE_V) {
+      for (int j = level; j < 2; j++) {
+        printf(".. ");
+      }
+      uint64 pa = PTE2PA(*pte);
+      printf("..%d: pte %p pa %p\n", i, *pte, pa);
+      _vmprint((pagetable_t)pa, level - 1);
+    }
+  }
+}
+
 // Return the address of the PTE in page table pagetable
 // that corresponds to virtual address va.  If alloc!=0,
 // create any required page-table pages.
