@@ -67,6 +67,26 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+    // clock intr
+    struct proc *p = myproc();
+
+    // clock intr and tick enable and not running now;
+    if (which_dev == 2 && p->a.tick && !p->a.running) {
+      p->a.tickres --;
+      if (p->a.tickres == 0) {
+        // set tickres back.
+        p->a.tickres = p->a.tick;
+
+        // save the trapframe now.
+        *(p->a.interrupted_trapframe) = *(p->trapframe);
+
+        // get the epc to be the handler address.
+        p->trapframe->epc = (uint64)(p->a.handler);
+
+        // set running status;
+        p->a.running = 1;
+      }
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
