@@ -153,7 +153,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V)
+    if(*pte & PTE_V && !(*pte & PTE_COW))
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
@@ -183,7 +183,7 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
       panic("uvmunmap: not mapped");
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
-    if(do_free){
+    if(do_free && !(*pte & PTE_COW)){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
     }
@@ -308,7 +308,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -317,13 +316,28 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+
+    // if father has W or has COW
+    // clear W and set COW for child.
+    if (flags & PTE_W || flags & PTE_COW) {
+      flags = flags & ~(PTE_W);
+      flags = flags | PTE_COW;
+    }
+
+    // remap pa with flags PTE_COW to child.
+    if(mappages(new, i, PGSIZE, (uint64)pa, flags) != 0){
       goto err;
     }
+
+    // for every memmap, we should add ref cnt.
+    kaddref(pa);
+
+    // reset the father's pte.
+    if (*pte & PTE_W) {
+      *pte = *pte & ~(PTE_W);
+      *pte = *pte | PTE_COW;
+    }
+
   }
   return 0;
 
