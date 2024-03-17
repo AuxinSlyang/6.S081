@@ -67,6 +67,11 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
+  } else if (r_scause() == 0xf) {
+    if (pagefault_handler(myproc()->pagetable, r_stval()) == -1) {
+      // pf error. we just skip that inst.
+      p->trapframe->epc += 4;
+    }
   } else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());

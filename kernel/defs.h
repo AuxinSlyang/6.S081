@@ -66,6 +66,7 @@ void            kinit(void);
 void            kdecref(uint64);
 void            kaddref(uint64);
 uint32          kref(uint64);
+uint64          kmemres(void);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -176,6 +177,7 @@ uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+uint64          pagefault_handler(pagetable_t pt, uint64 va);
 
 // plic.c
 void            plicinit(void);

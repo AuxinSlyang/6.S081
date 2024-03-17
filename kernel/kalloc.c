@@ -39,7 +39,7 @@ freerange(void *pa_start, void *pa_end)
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE) {
-    kmem.ref[PA2REFINDEX((uint64)p)] = 1;
+    kmem.ref[PA2REFINDEX((uint64)p)] = 0;
     kfree(p);
   }
 }
@@ -56,7 +56,8 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  kdecref((uint64)pa);
+  if (kref((uint64)pa) > 0)
+    kdecref((uint64)pa);
 
   if (kref((uint64)pa) == 0) {
     // Fill with junk to catch dangling refs.
@@ -124,6 +125,23 @@ kref(uint64 pa)
 
   acquire(&kmem.lock);
   res = kmem.ref[PA2REFINDEX(pa)];
+  release(&kmem.lock);
+
+  return res;
+}
+
+uint64
+kmemres(void)
+{
+  uint64 res = 0;
+  struct run *r;
+
+  acquire(&kmem.lock);
+  r = kmem.freelist;
+  while(r) {
+    r = r->next;
+    res += PGSIZE;
+  }
   release(&kmem.lock);
 
   return res;

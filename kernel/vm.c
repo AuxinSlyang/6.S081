@@ -5,6 +5,8 @@
 #include "riscv.h"
 #include "defs.h"
 #include "fs.h"
+#include "spinlock.h"
+#include "proc.h"
 
 /*
  * the kernel's page table.
@@ -153,7 +155,7 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   for(;;){
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
-    if(*pte & PTE_V && !(*pte & PTE_COW))
+    if(*pte & PTE_V && ((*pte & PTE_COW) == 0))
       panic("mappages: remap");
     *pte = PA2PTE(pa) | perm | PTE_V;
     if(a == last)
@@ -178,12 +180,12 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
     if((pte = walk(pagetable, a, 0)) == 0)
-      panic("uvmunmap: walk");
+      continue;
     if((*pte & PTE_V) == 0)
-      panic("uvmunmap: not mapped");
+      continue;
     if(PTE_FLAGS(*pte) == PTE_V)
-      panic("uvmunmap: not a leaf");
-    if(do_free && !(*pte & PTE_COW)){
+      continue;
+    if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
     }
@@ -346,6 +348,58 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return -1;
 }
 
+uint64
+pagefault_handler(pagetable_t pt, uint64 va)
+{
+  pte_t *pte;
+  uint64 pa;
+  uint flags;
+  char* mem;
+
+  // out of memory
+  if (va >= MAXVA)
+    goto oom;
+
+  if((pte = walk(pt, PGROUNDDOWN(va), 0)) == 0)
+    goto oom;
+  if((*pte & PTE_V) == 0)
+    goto oom;
+  if ((*pte & PTE_COW) == 0)
+    goto oom;
+
+  pa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+
+  // if there are other process share this page
+  // just reallocate a new page and map it.
+  if (kref(pa) > 1) {
+    kdecref(pa);
+    if((mem = kalloc()) == 0)
+      goto oom;
+    memmove(mem, (char*)pa, PGSIZE);
+
+    // remap flags to it.
+    flags = flags | PTE_W;
+    flags = flags & ~(PTE_COW);
+    if(mappages(pt, PGROUNDDOWN(va), PGSIZE, (uint64)mem, flags) != 0){
+      kfree(mem);
+    }
+  } else {
+    // else we are the only guys to use it,
+    // just set Write back and clear COW.
+    *pte = *pte | PTE_W;
+    *pte = *pte & ~(PTE_COW);
+  }
+
+  return 0;
+oom:
+  printf("pagefault_handler: OOM, cannot allocate more memory\n");
+  uvmunmap(pt, 0, PGROUNDUP(myproc()->sz)/PGSIZE, 1);
+// err:
+  kill(myproc()->pid);
+  return -1;
+}
+
 // mark a PTE invalid for user access.
 // used by exec for the user stack guard page.
 void
@@ -366,6 +420,18 @@ int
 copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 {
   uint64 n, va0, pa0;
+  pte_t *pte;
+
+  if(dstva >= MAXVA || (pte = walk(pagetable, PGROUNDDOWN(dstva), 0)) == 0)
+    return -1;
+  if((*pte & PTE_V) == 0)
+    return -1;
+  if((*pte & PTE_COW)) {
+    if (pagefault_handler(pagetable, dstva)) {
+      printf("page fault but reallocate failed\n");
+      return -1;
+    }
+  }
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
