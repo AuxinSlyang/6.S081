@@ -21,6 +21,9 @@ static volatile uint32 *regs;
 
 struct spinlock e1000_lock;
 
+struct spinlock e1000_tx_lock;
+struct spinlock e1000_rx_lock;
+
 // called by pci_init().
 // xregs is the memory address at which the
 // e1000's registers are mapped.
@@ -95,26 +98,70 @@ e1000_init(uint32 *xregs)
 int
 e1000_transmit(struct mbuf *m)
 {
-  //
-  // Your code here.
-  //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
-  //
-  
+  acquire(&e1000_tx_lock);
+  uint32 tdt = regs[E1000_TDT];
+
+  // check if decs is dd.
+  if (!(tx_ring[tdt].status & E1000_TXD_STAT_DD)) {
+    // printf("The tx buffer is overflowing.\n");
+    return -1;
+  }
+
+  // reclaim the former transmit buffer.
+  if (tx_mbufs[tdt])
+    mbuffree(tx_mbufs[tdt]);
+
+  tx_ring[tdt].addr = (uint64)(m->head);
+  tx_ring[tdt].length = m->len;
+  tx_ring[tdt].status = tx_ring[tdt].status | ~(E1000_TXD_STAT_DD);
+  tx_ring[tdt].cmd = tx_ring[tdt].cmd | E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+
+  tx_mbufs[tdt] = m;
+  __sync_synchronize();
+
+  // after we have done all these things,
+  // we could set tdt ++;
+
+  regs[E1000_TDT] = (tdt + 1) % TX_RING_SIZE;
+  release(&e1000_tx_lock);
+
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver an mbuf for each packet (using net_rx()).
-  //
+  uint32 rdt;
+  uint32 rec_pkt = 0;
+  while (1) {
+    acquire(&e1000_rx_lock);
+    // get index.
+    rdt = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+
+    // test if descript done.
+    if (!(rx_ring[rdt].status & E1000_RXD_STAT_DD)) {
+      // ("In this intr, received %d pkts\n", rec_pkt);
+      release(&e1000_rx_lock);
+      break;
+    }
+
+    // update the rxbufs length.
+    rx_mbufs[rdt]->len = rx_ring[rdt].length;
+    struct mbuf *m = rx_mbufs[rdt];
+    // get receive in net.
+    net_rx(m);
+
+    // alloc new
+    rx_mbufs[rdt] = mbufalloc(0);
+    rx_ring[rdt].addr = (uint64)rx_mbufs[rdt]->head;
+    rx_ring[rdt].status = 0;
+
+    rec_pkt ++;
+
+    // add rdt register.
+    regs[E1000_RDT] = rdt;
+    release(&e1000_rx_lock);
+  }
 }
 
 void
