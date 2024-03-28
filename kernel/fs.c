@@ -381,7 +381,7 @@ iunlockput(struct inode *ip)
 // If there is no such block, bmap allocates one.
 // returns 0 if out of disk space.
 static uint
-bmap(struct inode *ip, uint bn, int read)
+bmap(struct inode *ip, uint bn)
 {
   uint addr, bn1, bn2, *a, *a1;
   struct buf *bp, *bp1;
@@ -438,9 +438,6 @@ bmap(struct inode *ip, uint bn, int read)
     bn1 = bn / NINDIRECT;
 
     if((addr = a[bn1]) == 0){
-      if (read) {
-        printf("bn1 %d\n", bn1);
-      }
       // allocate for indirect index.
       addr = balloc(ip->dev);
       if(addr){
@@ -457,9 +454,6 @@ bmap(struct inode *ip, uint bn, int read)
     a1 = (uint*)bp1->data;
     bn2 = bn % NINDIRECT;
     if ((addr = a1[bn2]) == 0) {
-      if (read) {
-        printf("bn2 %d\n", bn2);
-      }
       // allocate for indirect index.
       addr = balloc(ip->dev);
       if(addr){
@@ -566,7 +560,7 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
     n = ip->size - off;
 
   for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
-    uint addr = bmap(ip, off/BSIZE, 1);
+    uint addr = bmap(ip, off/BSIZE);
     if(addr == 0)
       break;
     bp = bread(ip->dev, addr);
@@ -600,7 +594,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
     return -1;
 
   for(tot=0; tot<n; tot+=m, off+=m, src+=m){
-    uint addr = bmap(ip, off/BSIZE, 0);
+    uint addr = bmap(ip, off/BSIZE);
     if(addr == 0)
       break;
     bp = bread(ip->dev, addr);

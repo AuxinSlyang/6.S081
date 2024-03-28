@@ -327,7 +327,42 @@ sys_open(void)
       end_op();
       return -1;
     }
+
     ilock(ip);
+    if (ip->type == T_SYMLINK) {
+      // for symlink we should check if
+      // NOFOLLOWE unset, means we should recursively find the
+      // not symlink file.
+      if (!(omode & O_NOFOLLOW)) {
+        char sym[MAXPATH];
+        struct inode *ip1;
+        int depth = 0;
+        while (ip->type == T_SYMLINK) {
+          // for those do not has nofollow.
+          // we should open it recursively.
+          readi(ip, 0, (uint64)sym, 0, MAXPATH);
+          if((ip1 = namei(sym)) == 0){
+            iunlockput(ip);
+            end_op();
+            return -1;
+          }
+          depth++;
+
+          if (depth > 10) {
+            printf("symlink depth > 10 maybe graph!\n");
+            iunlockput(ip);
+            end_op();
+            return -1;
+          }
+
+          // recursively unlock next inode.
+          iunlockput(ip);
+          ip = ip1;
+          ilock(ip);
+        }
+      }
+    }
+
     if(ip->type == T_DIR && omode != O_RDONLY){
       iunlockput(ip);
       end_op();
@@ -501,5 +536,49 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+// Create the path new as a link to a new inode, refers to
+// the old path.
+uint64
+sys_symlink(void)
+{
+  char name[DIRSIZ], target[MAXPATH], path[MAXPATH];
+  struct inode *dp, *ip;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+    return -1;
+
+  // parent donot exist
+  if((dp = nameiparent(path, name)) == 0)
+    return -1;
+
+  ilock(dp);
+
+  // path already exist.
+  if((ip = dirlookup(dp, path, 0)) != 0){
+    printf("already exist\n");
+    iunlockput(dp);
+    return -1;
+  }
+  iunlockput(dp);
+
+  // write in the target path.
+  begin_op();
+
+  ip = create(path, T_SYMLINK, 0, 0);
+  if(ip == 0){
+    end_op();
+    return -1;
+  }
+
+  if (writei(ip, 0, (uint64)target, 0, strlen(target)) < 0) {
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip);
+  end_op();
   return 0;
 }
