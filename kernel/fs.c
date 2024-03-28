@@ -69,6 +69,7 @@ balloc(uint dev)
   struct buf *bp;
 
   bp = 0;
+  // bitmap find.
   for(b = 0; b < sb.size; b += BPB){
     bp = bread(dev, BBLOCK(b, sb));
     for(bi = 0; bi < BPB && b + bi < sb.size; bi++){
@@ -380,10 +381,10 @@ iunlockput(struct inode *ip)
 // If there is no such block, bmap allocates one.
 // returns 0 if out of disk space.
 static uint
-bmap(struct inode *ip, uint bn)
+bmap(struct inode *ip, uint bn, int read)
 {
-  uint addr, *a;
-  struct buf *bp;
+  uint addr, bn1, bn2, *a, *a1;
+  struct buf *bp, *bp1;
 
   if(bn < NDIRECT){
     if((addr = ip->addrs[bn]) == 0){
@@ -416,6 +417,60 @@ bmap(struct inode *ip, uint bn)
     brelse(bp);
     return addr;
   }
+  bn -= NINDIRECT;
+  // printf("bn %d\n", bn);
+
+  if(bn < NDOUBLEINDIRECT){
+    // Load inindirect block, allocating if necessary.
+    // | - |
+    //     |
+    //     |
+    if((addr = ip->addrs[NINDEX]) == 0){
+      addr = balloc(ip->dev);
+      if(addr == 0)
+        return 0;
+      ip->addrs[NINDEX] = addr;
+    }
+    bp = bread(ip->dev, addr);
+    a = (uint*)bp->data;
+
+    // first find indirect place
+    bn1 = bn / NINDIRECT;
+
+    if((addr = a[bn1]) == 0){
+      if (read) {
+        printf("bn1 %d\n", bn1);
+      }
+      // allocate for indirect index.
+      addr = balloc(ip->dev);
+      if(addr){
+        a[bn1] = addr;
+        log_write(bp);
+      }
+    }
+
+    // | - | - |||||
+    //     | - |||||
+    //     | - |||||
+    // read indirect index.
+    bp1 = bread(ip->dev, a[bn1]);
+    a1 = (uint*)bp1->data;
+    bn2 = bn % NINDIRECT;
+    if ((addr = a1[bn2]) == 0) {
+      if (read) {
+        printf("bn2 %d\n", bn2);
+      }
+      // allocate for indirect index.
+      addr = balloc(ip->dev);
+      if(addr){
+        a1[bn2] = addr;
+        log_write(bp1);
+      }
+    }
+    brelse(bp1);
+    brelse(bp);
+    return addr;
+  }
 
   panic("bmap: out of range");
 }
@@ -425,9 +480,9 @@ bmap(struct inode *ip, uint bn)
 void
 itrunc(struct inode *ip)
 {
-  int i, j;
-  struct buf *bp;
-  uint *a;
+  int i, j, k;
+  struct buf *bp, *bp1;
+  uint *a, *a1;
 
   for(i = 0; i < NDIRECT; i++){
     if(ip->addrs[i]){
@@ -446,6 +501,37 @@ itrunc(struct inode *ip)
     brelse(bp);
     bfree(ip->dev, ip->addrs[NDIRECT]);
     ip->addrs[NDIRECT] = 0;
+  }
+
+
+  // |---|----|||||
+  //     |----|||||
+  //     |----|||||
+  if(ip->addrs[NINDEX]){
+    bp = bread(ip->dev, ip->addrs[NINDEX]);
+    a = (uint*)bp->data;
+    for(j = 0; j < NINDIRECT; j++){
+      // for last if enable.
+      if(a[j]){
+        // we need to get every indirect index.
+        // to find if there are some inindriect index.
+        bp1 = bread(ip->dev, a[j]);
+        a1 = (uint*)bp1->data;
+        for(k = 0; k < NINDIRECT; k++){
+          // for last, just free.
+          if(a1[k]){
+            bfree(ip->dev, a1[k]);
+          }
+        }
+        // after release the all inindirect
+        // release the corresponding indirect.
+        brelse(bp1);
+        bfree(ip->dev, a[j]);
+      }
+    }
+    brelse(bp);
+    bfree(ip->dev, ip->addrs[NINDEX]);
+    ip->addrs[NINDEX] = 0;
   }
 
   ip->size = 0;
@@ -480,7 +566,7 @@ readi(struct inode *ip, int user_dst, uint64 dst, uint off, uint n)
     n = ip->size - off;
 
   for(tot=0; tot<n; tot+=m, off+=m, dst+=m){
-    uint addr = bmap(ip, off/BSIZE);
+    uint addr = bmap(ip, off/BSIZE, 1);
     if(addr == 0)
       break;
     bp = bread(ip->dev, addr);
@@ -514,7 +600,7 @@ writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
     return -1;
 
   for(tot=0; tot<n; tot+=m, off+=m, src+=m){
-    uint addr = bmap(ip, off/BSIZE);
+    uint addr = bmap(ip, off/BSIZE, 0);
     if(addr == 0)
       break;
     bp = bread(ip->dev, addr);
